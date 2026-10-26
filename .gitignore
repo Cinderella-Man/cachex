@@ -1,6 +1,6 @@
 /_build
 /_native
-/benchmarks
+/benchmarks/*
 !/benchmarks/main.exs
 /cover
 /deps
@@ -10,5 +10,4 @@
 .elixir_ls
 .tool-versions
 erl_crash.dump
-mix.lock
 *.ez
