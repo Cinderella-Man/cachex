@@ -346,10 +346,24 @@ defmodule Cachex.Options do
       |> List.wrap()
 
     # validation of all warmer records
-    case validated?(warmers, :warmer) do
+    case validated?(warmers, :warmer) and unique_warmers?(warmers) do
       false -> error(:invalid_warmer)
       true -> cache(cache, warmers: warmers)
     end
+  end
+
+  # Ensures that all warmers in a cache can be told apart.
+  #
+  # A named warmer is identified by its name, and an unnamed warmer by its
+  # module. Two warmers sharing an identity would clash when started (and
+  # would be ambiguous when warming manually), so they're rejected.
+  defp unique_warmers?(warmers) do
+    identities =
+      Enum.map(warmers, fn warmer(module: module, name: name) ->
+        name || module
+      end)
+
+    length(Enum.uniq(identities)) == length(identities)
   end
 
   # Shorthand validation of a record type.

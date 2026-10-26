@@ -1365,8 +1365,10 @@ defmodule Cachex do
 
   This allows for manual warming of a cache in situations where
   you already know the backing state has been updated. The return
-  value of this function will contain the list of modules which
-  were warmed as a result of this call.
+  value of this function will contain the list of warmers which
+  were warmed as a result of this call, in the order they were
+  attached to the cache. Named warmers are listed by their name,
+  and unnamed warmers by their module.
 
   ## Options
 
@@ -1374,7 +1376,9 @@ defmodule Cachex do
 
       An optional list of modules to warm, acting as a whitelist. The default
       behaviour of this function is to trigger warming in all modules. You may
-      provide either the module name, or the registered warmer name.
+      provide either the module name, or the registered warmer name. A module
+      selects every warmer using that module, whether named or not. This option
+      was previously named `:modules`, which is still accepted as an alias.
 
     * `:wait`
 
@@ -1394,7 +1398,10 @@ defmodule Cachex do
       { :ok, [] }
 
       iex> Cachex.warm(:my_cache, wait: true)
-      { :ok, [MyWarmer]}
+      { :ok, [MyWarmer] }
+
+      iex> Cachex.warm(:my_cache, only: [:my_named_warmer], wait: true)
+      { :ok, [:my_named_warmer] }
 
   """
   @spec warm(cache, Keyword.t()) :: {status, [atom()]}

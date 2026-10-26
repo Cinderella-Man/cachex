@@ -34,6 +34,10 @@ defmodule Cachex.Services.Incubator do
   ###############
 
   # Generates a Supervisor specification for a warmer.
+  #
+  # Named warmers are identified by their name rather than their module,
+  # which allows several warmers built from the same module to run side
+  # by side in a cache (e.g. to warm from two different sources).
   defp spec(warmer(module: module, name: name) = warmer, cache) do
     options =
       case name do
@@ -41,6 +45,6 @@ defmodule Cachex.Services.Incubator do
         val -> [module, {cache, warmer}, [name: val]]
       end
 
-    %{id: module, start: {GenServer, :start_link, options}}
+    %{id: name || module, start: {GenServer, :start_link, options}}
   end
 end
