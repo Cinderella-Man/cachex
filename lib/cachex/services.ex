@@ -101,6 +101,26 @@ defmodule Cachex.Services do
   end
 
   @doc """
+  Retrieves the process to address for a warmer.
+
+  Named warmers are addressed by their name. Unnamed warmers are linked to
+  the process they had when the cache started, but a warmer restarted by its
+  supervisor runs in a new process, so they are looked up again under the
+  cache's Incubator, where their child id is their module.
+  """
+  @spec warmer_target(Cachex.Spec.cache(), Cachex.Spec.warmer()) :: pid | atom
+  def warmer_target(cache() = cache, warmer(module: module, name: name))
+      when is_pid(name) do
+    case cache |> find_children(Services.Incubator) |> find_pid(module) do
+      pid when is_pid(pid) -> pid
+      _ -> name
+    end
+  end
+
+  def warmer_target(_cache, warmer(name: name)),
+    do: name
+
+  @doc """
   Returns a list of all running cache services.
 
   This is used to view the children of the specified cache, whilst filtering

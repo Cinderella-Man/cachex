@@ -7,6 +7,8 @@ defmodule Cachex.Actions.Warm do
   # immediately refresh your warmed entries.
   import Cachex.Spec
 
+  alias Cachex.Services
+
   ##############
   # Public API #
   ##############
@@ -27,14 +29,14 @@ defmodule Cachex.Actions.Warm do
   warming triggered, in the order the warmers were attached to the cache. A
   named warmer is referenced by its name, and an unnamed warmer by its module.
   """
-  def execute(cache(warmers: warmers), options) do
+  def execute(cache(warmers: warmers) = cache, options) do
     only = Keyword.get(options, :only, Keyword.get(options, :modules))
     wait = Keyword.get(options, :wait, false)
 
     warmed =
       warmers
       |> Enum.filter(&filter_mod(&1, only))
-      |> Enum.map(&spawn_call(&1, wait))
+      |> Enum.map(&spawn_call(cache, &1, wait))
       |> Task.yield_many(:infinity)
       |> Enum.map(&extract_name/1)
 
@@ -50,20 +52,23 @@ defmodule Cachex.Actions.Warm do
     do: only == nil or mod in only or name in only
 
   # Spawns a task to invoke the call to the remote warmer.
-  defp spawn_call(warmer(module: module, name: name) = warmer, wait) do
+  defp spawn_call(cache, warmer(module: module, name: name) = warmer, wait) do
     Task.async(fn ->
-      call_warmer(warmer, wait)
+      cache
+      |> Services.warmer_target(warmer)
+      |> call_warmer(wait)
+
       reference(module, name)
     end)
   end
 
   # Invokes a warmer with blocking enabled.
-  defp call_warmer(warmer(name: name), true),
-    do: GenServer.call(name, :cachex_warmer, :infinity)
+  defp call_warmer(target, true),
+    do: GenServer.call(target, :cachex_warmer, :infinity)
 
   # Invokes a warmer with blocking disabled.
-  defp call_warmer(warmer(name: name), _),
-    do: send(name, :cachex_warmer)
+  defp call_warmer(target, _),
+    do: send(target, :cachex_warmer)
 
   # Converts a task result to a name reference.
   defp extract_name({_, {:ok, name}}),
