@@ -45,7 +45,6 @@ defmodule Cachex do
   alias Cachex.Services
 
   # alias any services
-  alias Services.Informant
   alias Services.Overseer
 
   # import util macros
@@ -308,9 +307,9 @@ defmodule Cachex do
          {:ok, true} <- ensure_unused(name),
          {:ok, cache} <- setup_env(name, options),
          {:ok, pid} = Supervisor.start_link(__MODULE__, cache, name: name),
-         {:ok, link} = Informant.link(cache),
-         ^link <- Overseer.update(name, link) do
-      _ = run_warmers(cache)
+         {:ok, link} = Services.link(cache),
+         ^link <- Overseer.update(name, link),
+         :ok <- setup_warmers(link) do
       {:ok, pid}
     end
   end
@@ -1366,26 +1365,43 @@ defmodule Cachex do
 
   This allows for manual warming of a cache in situations where
   you already know the backing state has been updated. The return
-  value of this function will contain the list of modules which
-  were warmed as a result of this call.
+  value of this function will contain the list of warmers which
+  were warmed as a result of this call, in the order they were
+  attached to the cache. Named warmers are listed by their name,
+  and unnamed warmers by their module.
 
   ## Options
 
-    * `:modules`
+    * `:only`
 
       An optional list of modules to warm, acting as a whitelist. The default
-      behaviour of this function is to trigger warming in all modules.
+      behaviour of this function is to trigger warming in all modules. You may
+      provide either the module name, or the registered warmer name. A module
+      selects every warmer using that module, whether named or not. This option
+      was previously named `:modules`, which is still accepted as an alias.
+
+    * `:wait`
+
+      Whether to wait for warmer completion or not, as a boolean. By default
+      warmers are triggered to run in the background, but passing `true` here
+      will block the return of this call until all warmers have completed.
 
   ## Examples
 
       iex> Cachex.warm(:my_cache)
       { :ok, [MyWarmer] }
 
-      iex> Cachex.warm(:my_cache, modules: [MyWarmer])
+      iex> Cachex.warm(:my_cache, only: [MyWarmer])
       { :ok, [MyWarmer] }
 
-      iex> Cachex.warm(:my_cache, modules: [])
+      iex> Cachex.warm(:my_cache, only: [])
       { :ok, [] }
+
+      iex> Cachex.warm(:my_cache, wait: true)
+      { :ok, [MyWarmer] }
+
+      iex> Cachex.warm(:my_cache, only: [:my_named_warmer], wait: true)
+      { :ok, [:my_named_warmer] }
 
   """
   @spec warm(cache, Keyword.t()) :: {status, [atom()]}
@@ -1443,24 +1459,28 @@ defmodule Cachex do
     end
   end
 
-  # Run warmers on cache startup
+  # Initializes cache warmers on startup.
   #
-  # This will find the cache's warmer pids by getting the children from the
-  # Incubator server, matching those pids to the warmer by module, and then
-  # executing the warmer based on the warmer's `async` attribute
-  defp run_warmers(cache(warmers: warmers) = cache) do
-    parent = Services.locate(cache, Services.Incubator)
-    children = if parent, do: Supervisor.which_children(parent), else: []
-    warmer_map = Map.new(children, fn {mod, pid, _, _} -> {mod, pid} end)
+  # This will trigger the initial cache warming via `Cachex.warm/2` while
+  # also respecting whether certain warmers should block startup or not.
+  #
+  # Each group is warmed through a cache record holding only its warmers, as
+  # an `:only` entry also matches modules: a warmer named after the module of
+  # a warmer in the other group would select that warmer as well.
+  defp setup_warmers(cache(warmers: warmers) = cache) do
+    {spawned, startup} = Enum.split_with(warmers, &warmer(&1, :async))
 
-    for warmer(module: module, async: async) <- warmers,
-        pid = warmer_map[module] do
-      if async do
-        send(pid, :cachex_warmer)
-      else
-        GenServer.call(pid, :cachex_warmer, :infinity)
-      end
+    with {:ok, _} <- warm_group(cache, spawned, false),
+         {:ok, _} <- warm_group(cache, startup, true) do
+      :ok
     end
+  end
+
+  # Warms exactly the provided warmers, waiting for them if requested.
+  defp warm_group(cache, warmers, wait) do
+    cache
+    |> cache(warmers: warmers)
+    |> Cachex.warm(const(:notify_false) ++ [wait: wait])
   end
 
   # Unwraps a command result into an unsafe form.

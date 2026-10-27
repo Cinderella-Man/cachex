@@ -102,7 +102,8 @@ defmodule Cachex.Spec do
           record(:warmer,
             module: atom,
             state: any,
-            async: boolean
+            async: boolean,
+            name: GenServer.server()
           )
 
   ###########
@@ -255,11 +256,16 @@ defmodule Cachex.Spec do
   associated with `Cachex.Warmer`. A state can also be provided, which will be passed
   to the execution callback of the provided module (which defaults to `nil`). An async
   flag determines if initial warmup will run asynchronously cache startup.
+
+  A warmer can also be given a name, which must be an atom. Named warmers are registered
+  under their name, and several warmers can share a module as long as their names differ.
+  Unnamed warmers are not registered, and are referenced by their module.
   """
   defrecord :warmer,
     module: nil,
     state: nil,
-    async: false
+    async: false,
+    name: nil
 
   ###############
   # Record Docs #

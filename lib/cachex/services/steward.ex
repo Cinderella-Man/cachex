@@ -12,6 +12,8 @@ defmodule Cachex.Services.Steward do
   """
   import Cachex.Spec
 
+  alias Cachex.Services
+
   # recognised
   @provisions [
     :cache
@@ -35,9 +37,8 @@ defmodule Cachex.Services.Steward do
 
     provisioned =
       warmers
-      |> Enum.concat(pre_hooks)
-      |> Enum.concat(post_hooks)
-      |> Enum.map(&map_names/1)
+      |> Enum.map(&{Services.warmer_target(cache, &1), warmer(&1, :module)})
+      |> Enum.concat(Enum.map(pre_hooks ++ post_hooks, &map_names/1))
 
     for {name, mod} <- provisioned, key in mod.provisions() do
       send(name, {:cachex_provision, provision})
@@ -51,8 +52,4 @@ defmodule Cachex.Services.Steward do
   # Map a hook into the name and module tuple
   defp map_names(hook(name: name, module: module)),
     do: {name, module}
-
-  # Map a warmer into the name and module tuple
-  defp map_names(warmer(module: module)),
-    do: {module, module}
 end

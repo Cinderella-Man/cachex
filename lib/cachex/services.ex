@@ -61,17 +61,64 @@ defmodule Cachex.Services do
   end
 
   @doc """
+  Links all hooks in a cache to their running process.
+
+  This is a required post-step as hooks are started independently and
+  are not named in a deterministic way. It will look up all hooks using
+  the Supervisor children and place them in a modified cache record.
+  """
+  @spec link(Cachex.Spec.cache()) :: {:ok, Cachex.Spec.cache()}
+  def link(cache(hooks: hooks(pre: [], post: []), warmers: []) = cache),
+    do: {:ok, cache}
+
+  def link(cache(hooks: hooks(pre: pre, post: post), warmers: warmers) = cache) do
+    hook_children = find_children(cache, Services.Informant)
+    warmer_children = find_children(cache, Services.Incubator)
+
+    linked =
+      cache(cache,
+        hooks:
+          hooks(
+            pre: attach_child(pre, hook_children),
+            post: attach_child(post, hook_children)
+          ),
+        warmers: attach_child(warmers, warmer_children)
+      )
+
+    {:ok, linked}
+  end
+
+  @doc """
   Retrieves the process identifier of the provided service.
 
   This will return `nil` if the service does not exist, or is not running.
   """
   @spec locate(Cachex.Spec.cache(), atom) :: pid | nil
   def locate(cache() = cache, service) do
-    Enum.find_value(services(cache), fn
-      {^service, pid, _tag, _id} -> pid
-      _ -> false
-    end)
+    cache
+    |> services
+    |> find_pid(service)
   end
+
+  @doc """
+  Retrieves the process to address for a warmer.
+
+  Named warmers are addressed by their name. Unnamed warmers are linked to
+  the process they had when the cache started, but a warmer restarted by its
+  supervisor runs in a new process, so they are looked up again under the
+  cache's Incubator, where their child id is their module.
+  """
+  @spec warmer_target(Cachex.Spec.cache(), Cachex.Spec.warmer()) :: pid | atom
+  def warmer_target(cache() = cache, warmer(module: module, name: name))
+      when is_pid(name) do
+    case cache |> find_children(Services.Incubator) |> find_pid(module) do
+      pid when is_pid(pid) -> pid
+      _ -> name
+    end
+  end
+
+  def warmer_target(_cache, warmer(name: name)),
+    do: name
 
   @doc """
   Returns a list of all running cache services.
@@ -183,6 +230,41 @@ defmodule Cachex.Services do
         type: :supervisor
       }
     ]
+  end
+
+  # Iterates a list of hooks and finds their reference in list of children.
+  #
+  # When there is a reference found, the hook is updated with the new PID.
+  defp attach_child(structs, children) do
+    Enum.map(structs, fn
+      warmer(module: module, name: nil) = warmer ->
+        warmer(warmer, name: find_pid(children, module))
+
+      hook(module: module, name: nil) = hook ->
+        hook(hook, name: find_pid(children, module))
+
+      value ->
+        value
+    end)
+  end
+
+  # Finds a list of running children for a service.
+  defp find_children(cache, service) do
+    case locate(cache, service) do
+      nil -> []
+      pid -> Supervisor.which_children(pid)
+    end
+  end
+
+  # Locates a process identifier for the given module.
+  #
+  # This uses a list of child modules; if no child is
+  # found, the value returned is nil.
+  defp find_pid(children, module) do
+    Enum.find_value(children, fn
+      {^module, pid, _, _} -> pid
+      _ -> false
+    end)
   end
 
   # Determines if a module is a Cachex service.
