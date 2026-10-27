@@ -1463,16 +1463,24 @@ defmodule Cachex do
   #
   # This will trigger the initial cache warming via `Cachex.warm/2` while
   # also respecting whether certain warmers should block startup or not.
+  #
+  # Each group is warmed through a cache record holding only its warmers, as
+  # an `:only` entry also matches modules: a warmer named after the module of
+  # a warmer in the other group would select that warmer as well.
   defp setup_warmers(cache(warmers: warmers) = cache) do
-    groups = Enum.group_by(warmers, &warmer(&1, :async), &warmer(&1, :name))
+    {spawned, startup} = Enum.split_with(warmers, &warmer(&1, :async))
 
-    startup = [wait: true, only: Map.get(groups, false, [])]
-    spawned = [wait: false, only: Map.get(groups, true, [])]
-
-    with {:ok, _} <- Cachex.warm(cache, const(:notify_false) ++ spawned),
-         {:ok, _} <- Cachex.warm(cache, const(:notify_false) ++ startup) do
+    with {:ok, _} <- warm_group(cache, spawned, false),
+         {:ok, _} <- warm_group(cache, startup, true) do
       :ok
     end
+  end
+
+  # Warms exactly the provided warmers, waiting for them if requested.
+  defp warm_group(cache, warmers, wait) do
+    cache
+    |> cache(warmers: warmers)
+    |> Cachex.warm(const(:notify_false) ++ [wait: wait])
   end
 
   # Unwraps a command result into an unsafe form.
